@@ -11,20 +11,22 @@ import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {CurrencyLibrary, Currency} from "v4-core/src/types/Currency.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
-import {Counter} from "../src/Counter.sol";
+import {LPDao} from "../src/LPDao.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 
 import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
 import {EasyPosm} from "./utils/EasyPosm.sol";
 import {Fixtures} from "./utils/Fixtures.sol";
 
-contract CounterTest is Test, Fixtures {
+import {OnOffHook} from "../src/OnOffHook.sol";
+
+contract LPDaoTest is Test, Fixtures {
     using EasyPosm for IPositionManager;
     using PoolIdLibrary for PoolKey;
     using CurrencyLibrary for Currency;
     using StateLibrary for IPoolManager;
 
-    Counter hook;
+    LPDao hook;
     PoolId poolId;
 
     uint256 tokenId;
@@ -39,15 +41,14 @@ contract CounterTest is Test, Fixtures {
         deployAndApprovePosm(manager);
 
         // Deploy the hook to an address with the correct flags
-        address flags = address(
+        address payable flags = payable(address(
             uint160(
-                Hooks.BEFORE_SWAP_FLAG | Hooks.AFTER_SWAP_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG
-                    | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG
+                Hooks.BEFORE_INITIALIZE_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG
             ) ^ (0x4444 << 144) // Namespace the hook to avoid collisions
-        );
+        ));
         bytes memory constructorArgs = abi.encode(manager); //Add all the necessary constructor arguments from the hook
-        deployCodeTo("Counter.sol:Counter", constructorArgs, flags);
-        hook = Counter(flags);
+        deployCodeTo("LPDao.sol:LPDao", constructorArgs, flags);
+        hook = LPDao(flags);
 
         // Create the pool
         key = PoolKey(currency0, currency1, 3000, 60, IHooks(hook));
@@ -57,6 +58,9 @@ contract CounterTest is Test, Fixtures {
         // Provide full-range liquidity to the pool
         tickLower = TickMath.minUsableTick(key.tickSpacing);
         tickUpper = TickMath.maxUsableTick(key.tickSpacing);
+
+        OnOffHook onOffHook = new OnOffHook();
+        hook.setProxy(address(onOffHook));
 
         (tokenId,) = posm.mint(
             key,
@@ -69,9 +73,10 @@ contract CounterTest is Test, Fixtures {
             block.timestamp,
             ZERO_BYTES
         );
+
     }
 
-    function testCounterHooks() public {
+    function testLPDaoHooks() public {
         // positions were created in setup()
         assertEq(hook.beforeAddLiquidityCount(poolId), 1);
         assertEq(hook.beforeRemoveLiquidityCount(poolId), 0);
