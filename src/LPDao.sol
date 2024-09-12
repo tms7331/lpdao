@@ -20,8 +20,6 @@ import {Voting} from "./Voting.sol";
 contract LPDao is BaseHook, Voting {
     using PoolIdLibrary for PoolKey;
     using LPFeeLibrary for uint24;
-
-
     using Address for address;
 
     // Mapping from poolId to user to their deposit balance
@@ -51,7 +49,7 @@ contract LPDao is BaseHook, Voting {
             afterInitialize: false,
             beforeAddLiquidity: true,
             afterAddLiquidity: false,
-            beforeRemoveLiquidity: false,
+            beforeRemoveLiquidity: true,
             afterRemoveLiquidity: false,
             beforeSwap: true,
             afterSwap: false,
@@ -95,10 +93,14 @@ contract LPDao is BaseHook, Voting {
     function beforeAddLiquidity(
         address,
         PoolKey calldata key,
-        IPoolManager.ModifyLiquidityParams calldata,
+        IPoolManager.ModifyLiquidityParams calldata params,
         bytes calldata
     ) external override returns (bytes4) {
         beforeAddLiquidityCount[key.toId()]++;
+
+        int liqAmount = (params.tickUpper - params.tickLower) * params.liquidityDelta;
+        // Here liquidityDelta will always be positive
+        depositedLiquidity[msg.sender] += uint(liqAmount);
 
         // (bool success, bytes memory data) = proxy.delegatecall(
         //     abi.encodeWithSignature("checkAddLiquidity(uint256)", 33)
@@ -109,6 +111,20 @@ contract LPDao is BaseHook, Voting {
 
         return BaseHook.beforeAddLiquidity.selector;
     }
+
+
+    function beforeRemoveLiquidity(
+        address,
+        PoolKey calldata key,
+        IPoolManager.ModifyLiquidityParams calldata params,
+        bytes calldata
+    ) external override returns (bytes4) {
+        int liqAmount = (params.tickUpper - params.tickLower) * params.liquidityDelta;
+        // Here liquidityDelta will always be negative
+        depositedLiquidity[msg.sender] -= uint(-liqAmount);
+        return BaseHook.beforeRemoveLiquidity.selector;
+    }
+
 
     // Fallback function to forward calls to the proxy
     fallback() external payable {

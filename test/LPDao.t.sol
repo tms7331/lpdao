@@ -11,13 +11,12 @@ import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {CurrencyLibrary, Currency} from "v4-core/src/types/Currency.sol";
 import {PoolSwapTest} from "v4-core/src/test/PoolSwapTest.sol";
-import {LPDao} from "../src/LPDao.sol";
 import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
-
 import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
 import {EasyPosm} from "./utils/EasyPosm.sol";
 import {Fixtures} from "./utils/Fixtures.sol";
 
+import {LPDao} from "../src/LPDao.sol";
 import {OnOffHook} from "../src/OnOffHook.sol";
 
 contract LPDaoTest is Test, Fixtures {
@@ -43,7 +42,7 @@ contract LPDaoTest is Test, Fixtures {
         // Deploy the hook to an address with the correct flags
         address payable flags = payable(address(
             uint160(
-                Hooks.BEFORE_INITIALIZE_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG
+                Hooks.BEFORE_INITIALIZE_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG
             ) ^ (0x4444 << 144) // Namespace the hook to avoid collisions
         ));
         bytes memory constructorArgs = abi.encode(manager); //Add all the necessary constructor arguments from the hook

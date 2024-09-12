@@ -3,15 +3,41 @@ pragma solidity ^0.8.24;
 
 import {ERC20} from "v4-core/lib/openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
 
+contract VotingToken is ERC20 {
+    address private votingContract;
+    // Can only let each user mint once
+    mapping(address => bool) private minted;
+    constructor(address _votingContract) ERC20("LPDao Voting Token", "VOTE") {
+        votingContract = _votingContract;
+    }
+
+    modifier onlyVotingContract() {
+        require(msg.sender == votingContract, "Not the manager");
+        _;
+    }
+
+    function mint(address to, uint256 amount) external onlyVotingContract {
+        require(!minted[to], "Already minted");
+        minted[to] = true;
+        _mint(to, amount);
+    }
+
+    function burn(address from, uint256 amount) external onlyVotingContract {
+        _burn(from, amount);
+    }
+}
+
 contract Voting {
     address public proxy;
     address public manager;
+
 
     uint public constant VOTING_DURATION = 1 weeks;
     uint public constant ACTION_DELAY = 1 weeks;
 
     struct Proposal {
         address proposedAddress;
+        VotingToken votingToken;
         uint votesFor;
         uint votesAgainst;
         bool active;
@@ -23,6 +49,8 @@ contract Voting {
     uint public proposalCount;
     mapping(uint => Proposal) public proposals;
     mapping(uint => mapping(address => bool)) public hasVoted;
+    // Track how much each user has deposited
+    mapping(address => uint) public depositedLiquidity;
 
     modifier onlyManager() {
         require(msg.sender == manager, "Not the manager");
@@ -35,9 +63,15 @@ contract Voting {
     event ProxyUpdated(address newProxy);
 
     function proposeNewManager(address _newManager) external {
-        // TODO - only members/token holders should be able to propose new manager
+        require(_newManager != address(0), "Invalid address");
+        require(_newManager != manager, "Already the manager");
+        require(depositedLiquidity[msg.sender] > 0, "Must be a DAO participant to propose new manager!");
+        
+        VotingToken votingToken = new VotingToken(address(this));
+
         proposals[proposalCount] = Proposal({
             proposedAddress: _newManager,
+            votingToken: votingToken,
             votesFor: 0,
             votesAgainst: 0,
             active: true,
@@ -50,8 +84,11 @@ contract Voting {
     }
 
     function proposeNewProxy(address _newProxy) external onlyManager {
+        VotingToken votingToken = new VotingToken(address(this));
+
         proposals[proposalCount] = Proposal({
             proposedAddress: _newProxy,
+            votingToken: votingToken,
             votesFor: 0,
             votesAgainst: 0,
             active: true,
@@ -64,11 +101,13 @@ contract Voting {
     }
 
     function getTokensForVote(uint _proposalId) external {
-        // TODO - needs to calculate msg.sender's balances and mint tokens for them
+        Proposal storage proposal = proposals[_proposalId];
+        uint256 amount = depositedLiquidity[msg.sender];
+        // mint function stores address to prevent double minting
+        proposal.votingToken.mint(msg.sender, amount);
     }
 
     function voteOnProposal(uint _proposalId, uint amount, bool _voteFor) external {
-        // TODO - user needs to mint ERC20s and transfer them here
         Proposal storage proposal = proposals[_proposalId];
         require(proposal.active, "Proposal is not active");
         require(block.timestamp <= proposal.createdAt + VOTING_DURATION, "Voting period has ended");
@@ -81,6 +120,8 @@ contract Voting {
         } else {
             proposal.votesAgainst += amount;
         }
+        // This will revert if the user doesn't have enough tokens
+        proposal.votingToken.burn(msg.sender, amount);
 
         emit VoteCast(_proposalId, msg.sender, amount, _voteFor);
     }
