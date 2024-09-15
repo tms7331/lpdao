@@ -29,8 +29,7 @@ contract VotingToken is ERC20 {
 
 contract Voting {
     address public proxy;
-    address public manager;
-
+    address public fundManager;
 
     uint public constant VOTING_DURATION = 1 weeks;
     uint public constant ACTION_DELAY = 1 weeks;
@@ -53,7 +52,7 @@ contract Voting {
     mapping(address => uint) public depositedLiquidity;
 
     modifier onlyManager() {
-        require(msg.sender == manager, "Not the manager");
+        require(msg.sender == fundManager, "Not the manager");
         _;
     }
 
@@ -62,15 +61,15 @@ contract Voting {
     event ManagerUpdated(address newManager);
     event ProxyUpdated(address newProxy);
 
-    function proposeNewManager(address _newManager) external {
-        require(_newManager != address(0), "Invalid address");
-        require(_newManager != manager, "Already the manager");
+    function proposeNewManager(address _newFundManager) external {
+        require(_newFundManager != address(0), "Invalid address");
+        require(_newFundManager != fundManager, "Already the manager");
         require(depositedLiquidity[msg.sender] > 0, "Must be a DAO participant to propose new manager!");
         
         VotingToken votingToken = new VotingToken(address(this));
 
         proposals[proposalCount] = Proposal({
-            proposedAddress: _newManager,
+            proposedAddress: _newFundManager,
             votingToken: votingToken,
             votesFor: 0,
             votesAgainst: 0,
@@ -79,7 +78,7 @@ contract Voting {
             createdAt: block.timestamp,
             actionAvailableAt: block.timestamp + VOTING_DURATION + ACTION_DELAY
         });
-        emit ProposalCreated(proposalCount, _newManager, true);
+        emit ProposalCreated(proposalCount, _newFundManager, true);
         proposalCount++;
     }
 
@@ -133,10 +132,10 @@ contract Voting {
         require(block.timestamp >= proposal.actionAvailableAt, "Action period has not started");
         require(proposal.votesFor > proposal.votesAgainst, "Proposal not approved");
 
-        manager = proposal.proposedAddress;
+        fundManager = proposal.proposedAddress;
         proposal.active = false;
 
-        emit ManagerUpdated(manager);
+        emit ManagerUpdated(fundManager);
     }
 
     function updateProxy(uint _proposalId) external {

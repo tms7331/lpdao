@@ -14,6 +14,7 @@ import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {Address} from "v4-core/lib/openzeppelin-contracts/contracts/utils/Address.sol";
 import {IERC20} from "v4-core/lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
 import {Voting} from "./Voting.sol";
 
 
@@ -21,20 +22,6 @@ contract LPDao is BaseHook, Voting {
     using PoolIdLibrary for PoolKey;
     using LPFeeLibrary for uint24;
     using Address for address;
-
-    // Mapping from poolId to user to their deposit balance
-    mapping(PoolId => mapping(address => uint256)) public userDepositBalance;
-
-
-    // NOTE: ---------------------------------------------------------
-    // state variables should typically be unique to a pool
-    // a single hook contract should be able to service multiple pools
-    // ---------------------------------------------------------------
-
-    mapping(PoolId => uint256 count) public beforeSwapCount;
-    mapping(PoolId => uint256 count) public afterSwapCount;
-    mapping(PoolId => uint256 count) public beforeAddLiquidityCount;
-    mapping(PoolId => uint256 count) public beforeRemoveLiquidityCount;
 
     event Deposit(address indexed user, address indexed token, PoolId indexed poolId, uint256 amount);
     event Withdraw(address indexed user, address indexed token, PoolId indexed poolId, uint256 amount);
@@ -62,6 +49,39 @@ contract LPDao is BaseHook, Voting {
         });
     }
 
+
+        /*
+    function approvePosm() internal {
+        approvePosmCurrency(currency0);
+        approvePosmCurrency(currency1);
+    }
+
+    function approvePosmCurrency(Currency currency) internal {
+        // Because POSM uses permit2, we must execute 2 permits/approvals.
+        // 1. First, the caller must approve permit2 on the token.
+        IERC20(Currency.unwrap(currency)).approve(address(permit2), type(uint256).max);
+        // 2. Then, the caller must approve POSM as a spender of permit2. TODO: This could also be a signature.
+        permit2.approve(Currency.unwrap(currency), address(posm), type(uint160).max, type(uint48).max);
+    }
+
+    function depositLiquidity(address user, address token, uint256 amount) internal {
+
+        // IPositionManager.
+        (tokenId,) = posm.mint(
+            key,
+            tickLower,
+            tickUpper,
+            10_000e18,
+            MAX_SLIPPAGE_ADD_LIQUIDITY,
+            MAX_SLIPPAGE_ADD_LIQUIDITY,
+            address(this),
+            block.timestamp,
+            ZERO_BYTES
+        );
+
+    }
+*/
+
     function beforeInitialize(address, PoolKey calldata key, uint160, bytes calldata) external override returns (bytes4) {
         // TODO - enable
         // require(msg.sender == manager, "Only pool manager can initialize");
@@ -77,7 +97,6 @@ contract LPDao is BaseHook, Voting {
         override
         returns (bytes4, BeforeSwapDelta, uint24)
     {
-        beforeSwapCount[key.toId()]++;
 
         // (bool success, bytes memory data) = proxy.delegatecall(
         //     abi.encodeWithSignature("checkSwap(uint256)", 33)
@@ -96,7 +115,6 @@ contract LPDao is BaseHook, Voting {
         IPoolManager.ModifyLiquidityParams calldata params,
         bytes calldata
     ) external override returns (bytes4) {
-        beforeAddLiquidityCount[key.toId()]++;
 
         int liqAmount = (params.tickUpper - params.tickLower) * params.liquidityDelta;
         // Here liquidityDelta will always be positive
@@ -128,7 +146,7 @@ contract LPDao is BaseHook, Voting {
 
     // Fallback function to forward calls to the proxy
     fallback() external payable {
-        require(msg.sender == manager, "Only pool manager can interact with proxy");
+        require(msg.sender == fundManager, "Only fund manager can interact with proxy");
 
         address _proxy = proxy;
         require(_proxy != address(0), "Proxy address not set");
