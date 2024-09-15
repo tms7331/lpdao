@@ -15,18 +15,27 @@ import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {Address} from "v4-core/lib/openzeppelin-contracts/contracts/utils/Address.sol";
 import {IERC20} from "v4-core/lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
+import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
 import {Voting} from "./Voting.sol";
+
+import {EasyPosm} from "../test/utils/EasyPosm.sol";
 
 
 contract LPDao is BaseHook, Voting {
     using PoolIdLibrary for PoolKey;
+    using EasyPosm for IPositionManager;
     using LPFeeLibrary for uint24;
     using Address for address;
+
+    IPositionManager posm;
+    IAllowanceTransfer permit2;
 
     event Deposit(address indexed user, address indexed token, PoolId indexed poolId, uint256 amount);
     event Withdraw(address indexed user, address indexed token, PoolId indexed poolId, uint256 amount);
 
-    constructor(IPoolManager _poolManager) BaseHook(_poolManager) {
+    constructor(IPoolManager _poolManager, IPositionManager _posm, IAllowanceTransfer _permit2) BaseHook(_poolManager) {
+        posm = _posm;
+        permit2 = _permit2;
     }
 
 
@@ -50,12 +59,6 @@ contract LPDao is BaseHook, Voting {
     }
 
 
-        /*
-    function approvePosm() internal {
-        approvePosmCurrency(currency0);
-        approvePosmCurrency(currency1);
-    }
-
     function approvePosmCurrency(Currency currency) internal {
         // Because POSM uses permit2, we must execute 2 permits/approvals.
         // 1. First, the caller must approve permit2 on the token.
@@ -64,23 +67,33 @@ contract LPDao is BaseHook, Voting {
         permit2.approve(Currency.unwrap(currency), address(posm), type(uint160).max, type(uint48).max);
     }
 
-    function depositLiquidity(address user, address token, uint256 amount) internal {
 
-        // IPositionManager.
+    function depositLiquidity(PoolKey calldata key, int24 tickLower, int24 tickUpper, uint256 amount) external {
+        approvePosmCurrency(key.currency0);
+        approvePosmCurrency(key.currency1);
+
+        // Need to transfer the currendies to our contract
+        // TODO - have to figure out actual amounts here, which might not be easy
+        IERC20(Currency.unwrap(key.currency0)).transferFrom(msg.sender, address(this), amount);
+        IERC20(Currency.unwrap(key.currency1)).transferFrom(msg.sender, address(this), amount);
+
+        uint256 MAX_SLIPPAGE_ADD_LIQUIDITY = type(uint256).max;
+        uint256 MAX_SLIPPAGE_REMOVE_LIQUIDITY = 0;
+
+        uint256 tokenId;
         (tokenId,) = posm.mint(
             key,
             tickLower,
             tickUpper,
-            10_000e18,
+            amount,
             MAX_SLIPPAGE_ADD_LIQUIDITY,
             MAX_SLIPPAGE_ADD_LIQUIDITY,
             address(this),
             block.timestamp,
-            ZERO_BYTES
+            ""
         );
-
     }
-*/
+
 
     function beforeInitialize(address, PoolKey calldata key, uint160, bytes calldata) external override returns (bytes4) {
         // TODO - enable
