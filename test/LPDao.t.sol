@@ -127,8 +127,10 @@ contract LPDaoTest is Test, Fixtures {
         uint256 amount = 10_000e18;
         IERC20(Currency.unwrap(key.currency0)).approve(address(hook), amount);
         IERC20(Currency.unwrap(key.currency1)).approve(address(hook), amount);
-        hook.depositLiquidity(k, tLower, tUpper, amount);
+        uint tokenId = hook.depositLiquidity(k, tLower, tUpper, amount);
         // If we make it here without reverting, we were successful...
+
+        hook.withdrawLiquidity(tokenId);
     }
 
 

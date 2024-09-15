@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import "forge-std/console.sol";
+
 import {BaseHook} from "v4-periphery/src/base/hooks/BaseHook.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
@@ -68,7 +70,7 @@ contract LPDao is BaseHook, Voting {
     }
 
 
-    function depositLiquidity(PoolKey calldata key, int24 tickLower, int24 tickUpper, uint256 amount) external {
+    function depositLiquidity(PoolKey calldata key, int24 tickLower, int24 tickUpper, uint256 amount) external returns (uint256 tokenId) {
         approvePosmCurrency(key.currency0);
         approvePosmCurrency(key.currency1);
 
@@ -80,7 +82,6 @@ contract LPDao is BaseHook, Voting {
         uint256 MAX_SLIPPAGE_ADD_LIQUIDITY = type(uint256).max;
         uint256 MAX_SLIPPAGE_REMOVE_LIQUIDITY = 0;
 
-        uint256 tokenId;
         (tokenId,) = posm.mint(
             key,
             tickLower,
@@ -92,6 +93,23 @@ contract LPDao is BaseHook, Voting {
             block.timestamp,
             ""
         );
+    }
+
+    function withdrawLiquidity(uint256 tokenId) external {
+        // TODO - have to make sure the tokenId belongs to msg.sender
+        uint256 amount0Min = 0;
+        uint256 amount1Min = 0;
+        BalanceDelta delta = posm.burn(
+            tokenId,
+            amount0Min,
+            amount1Min,
+            address(this),
+            block.timestamp,
+            ""
+        );
+        // TODO - have to send thse back to user
+        int128 a0 = delta.amount0();
+        int128 a1 = delta.amount1();
     }
 
 
