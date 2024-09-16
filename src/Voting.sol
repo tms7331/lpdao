@@ -2,6 +2,9 @@
 pragma solidity ^0.8.24;
 
 import {ERC20} from "v4-core/lib/openzeppelin-contracts/contracts/token/ERC20/ERC20.sol";
+import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
+import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 
 contract VotingToken is ERC20 {
     address private votingContract;
@@ -27,8 +30,15 @@ contract VotingToken is ERC20 {
     }
 }
 
+
+interface IProxy {
+    function checkSwap(address, PoolKey calldata key, IPoolManager.SwapParams calldata, bytes calldata) external returns (bool, bool, uint);
+    function checkAddLiquidity(address depositor, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata, bytes calldata) external returns (bool);
+    function upgradeToAndCall(address, bytes memory) external;
+}
+
 contract Voting {
-    address public proxy;
+    IProxy public proxy;
     address public fundManager;
 
     uint public constant VOTING_DURATION = 1 weeks;
@@ -36,6 +46,7 @@ contract Voting {
 
     struct Proposal {
         address proposedAddress;
+        bytes data;
         VotingToken votingToken;
         uint votesFor;
         uint votesAgainst;
@@ -61,6 +72,14 @@ contract Voting {
     event ManagerUpdated(address newManager);
     event ProxyUpdated(address newProxy);
 
+    function setProxy(address _proxy) external {
+        // Only allow it to be set once, think it's ok not to have any access control
+        // as there's no benefit to someone frontrunning and setting it to a random address
+        require(address(proxy) == address(0), "Proxy already set");
+        require(_proxy != address(0), "Invalid proxy address");
+        proxy = IProxy(_proxy);
+    }
+
     function proposeNewManager(address _newFundManager) external {
         require(_newFundManager != address(0), "Invalid address");
         require(_newFundManager != fundManager, "Already the manager");
@@ -70,6 +89,7 @@ contract Voting {
 
         proposals[proposalCount] = Proposal({
             proposedAddress: _newFundManager,
+            data: bytes(""),
             votingToken: votingToken,
             votesFor: 0,
             votesAgainst: 0,
@@ -82,11 +102,12 @@ contract Voting {
         proposalCount++;
     }
 
-    function proposeNewProxy(address _newProxy) external onlyManager {
+    function proposeNewProxy(address _newProxy, bytes memory _data) external onlyManager {
         VotingToken votingToken = new VotingToken(address(this));
 
         proposals[proposalCount] = Proposal({
             proposedAddress: _newProxy,
+            data: _data,
             votingToken: votingToken,
             votesFor: 0,
             votesAgainst: 0,
@@ -145,14 +166,15 @@ contract Voting {
         require(block.timestamp >= proposal.actionAvailableAt, "Action period has not started");
         require(proposal.votesFor > proposal.votesAgainst, "Proposal not approved");
 
-        proxy = proposal.proposedAddress;
+        proxy.upgradeToAndCall(proposal.proposedAddress, proposal.data);
+
         proposal.active = false;
 
-        emit ProxyUpdated(proxy);
+        emit ProxyUpdated(proposal.proposedAddress);
     }
 
     // TEMP - simplifies testing
-    function setProxy(address _proxy) external {
-        proxy = _proxy;
+    function setProxyTemp(address _proxy) external {
+        proxy = IProxy(_proxy);
     }
 }

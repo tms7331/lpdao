@@ -120,7 +120,6 @@ contract LPDao is BaseHook, Voting {
             block.timestamp,
             ""
         );
-        // TODO - have to send thse back to user
 
         uint startingToken0Amount = lpp.token0Amount;
         uint startingToken1Amount = lpp.token1Amount;
@@ -142,66 +141,56 @@ contract LPDao is BaseHook, Voting {
     }
 
 
-    function beforeInitialize(address, PoolKey calldata key, uint160, bytes calldata) external override returns (bytes4) {
+    function beforeInitialize(address initializer, PoolKey calldata key, uint160, bytes calldata) external override returns (bytes4) {
         // TODO - enable
-        // require(msg.sender == manager, "Only pool manager can initialize");
-        // require(key.currency0 == Currency.wrap(address(0)) || key.currency1 == Currency.wrap(address(0)), "One currency must be ETH");
+        require(initializer == fundManager, "Only fund manager can initialize");
+        require(key.currency0 == Currency.wrap(address(0)) || key.currency1 == Currency.wrap(address(0)), "One currency must be ETH");
         
         // Our beforeSwap logic relies on pool fees being dynamic
-        // require(key.fee.isDynamicFee(), "Pool must have dynamic fee");
+        require(key.fee.isDynamicFee(), "Pool must have dynamic fee");
         return BaseHook.beforeInitialize.selector;
     }
 
-    function beforeSwap(address, PoolKey calldata key, IPoolManager.SwapParams calldata, bytes calldata)
+    function beforeSwap(address swapper, PoolKey calldata key, IPoolManager.SwapParams calldata swapParams, bytes calldata data)
         external
         override
         returns (bytes4, BeforeSwapDelta, uint24)
     {
-        // proxy.checkSwap(33);
 
-        // TODO - need to set proxy addressp
-        // (bool success, bytes memory data) = proxy.delegatecall(
-        //     abi.encodeWithSignature("checkSwap(uint256)", 33)
-        // );
-        // require(success, "Delegatecall failed");
-        // bool decision = abi.decode(data, (bool));
-        // require(decision, "Decision failed");
+        (bool canSwap, bool feeAdj, uint fee) = proxy.checkSwap(swapper, key, swapParams, data);
+        require(canSwap, "Swap not allowed");
 
+        if (feeAdj) {
+            uint overrideFee = fee | uint256(LPFeeLibrary.OVERRIDE_FEE_FLAG);
+            return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, uint24(overrideFee));
+        }
         return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
     }
 
-
     function beforeAddLiquidity(
-        address,
+        address depositor,
         PoolKey calldata key,
-        IPoolManager.ModifyLiquidityParams calldata params,
-        bytes calldata
+        IPoolManager.ModifyLiquidityParams calldata liqParams,
+        bytes calldata data
     ) external override returns (bytes4) {
+        bool canAddLiquidity = proxy.checkAddLiquidity(depositor, key, liqParams, data);
+        require(canAddLiquidity, "Add liquidity not allowed");
 
-        int liqAmount = (params.tickUpper - params.tickLower) * params.liquidityDelta;
+        int liqAmount = (liqParams.tickUpper - liqParams.tickLower) * liqParams.liquidityDelta;
         // Here liquidityDelta will always be positive
-        depositedLiquidity[msg.sender] += uint(liqAmount);
-
-        // (bool success, bytes memory data) = proxy.delegatecall(
-        //     abi.encodeWithSignature("checkAddLiquidity(uint256)", 33)
-        // );
-        // require(success, "Delegatecall failed");
-        // bool decision = abi.decode(data, (bool));
-        // require(decision, "Decision failed");
-
+        depositedLiquidity[depositor] += uint(liqAmount);
         return BaseHook.beforeAddLiquidity.selector;
     }
 
-
     function beforeRemoveLiquidity(
-        address,
+        address depositor,
         PoolKey calldata key,
-        IPoolManager.ModifyLiquidityParams calldata params,
+        IPoolManager.ModifyLiquidityParams calldata liqParams,
         bytes calldata
     ) external override returns (bytes4) {
-        int liqAmount = (params.tickUpper - params.tickLower) * params.liquidityDelta;
+        int liqAmount = (liqParams.tickUpper - liqParams.tickLower) * liqParams.liquidityDelta;
         // Here liquidityDelta will always be negative
-        depositedLiquidity[msg.sender] -= uint(-liqAmount);
+        depositedLiquidity[depositor] -= uint(-liqAmount);
         return BaseHook.beforeRemoveLiquidity.selector;
     }
 

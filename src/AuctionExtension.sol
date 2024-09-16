@@ -48,7 +48,7 @@ contract AuctionExtension {
         });
     }
 
-    function checkAddLiquidity(address, PoolKey calldata, IPoolManager.SwapParams calldata, bytes calldata) public view returns (bool) {
+    function checkAddLiquidity(address, PoolKey calldata, IPoolManager.ModifyLiquidityParams calldata, bytes calldata) public view returns (bool) {
         return true;
     }
 

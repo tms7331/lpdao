@@ -15,6 +15,7 @@ contract OnOffHookTest is Test {
     address public fundManager = address(0x123);
     address public depositor = address(0x456);
     IPoolManager.SwapParams swapParams;
+    IPoolManager.ModifyLiquidityParams liqParams;
     PoolKey public key;
     PoolId public poolId;
 
@@ -27,6 +28,14 @@ contract OnOffHookTest is Test {
         poolId = key.toId();
 
         swapParams = IPoolManager.SwapParams({zeroForOne: true, amountSpecified: 0.01 ether, sqrtPriceLimitX96: 0});
+
+        // Can be anything, we won't process them
+        liqParams = IPoolManager.ModifyLiquidityParams({
+            tickLower: 0,
+            tickUpper: 0,
+            liquidityDelta: 0,
+            salt: bytes32(0)
+        });
     }
 
     function testSetDepositWhitelistActive() public {
@@ -65,7 +74,7 @@ contract OnOffHookTest is Test {
 
     function testCheckAddLiquidity() public {
         // Test when deposit whitelist is inactive
-        bool canAddLiquidity = onOff.checkAddLiquidity(depositor, key, swapParams, "");
+        bool canAddLiquidity = onOff.checkAddLiquidity(depositor, key, liqParams, "");
         assertTrue(canAddLiquidity, "Should allow liquidity addition when whitelist is inactive");
 
         // Activate deposit whitelist and set the user as whitelisted
@@ -75,12 +84,12 @@ contract OnOffHookTest is Test {
         onOff.setDepositWhitelist(poolId, depositor, true);
 
         // Now check if the user can add liquidity when whitelist is active
-        canAddLiquidity = onOff.checkAddLiquidity(depositor, key, swapParams, "");
+        canAddLiquidity = onOff.checkAddLiquidity(depositor, key, liqParams, "");
         assertTrue(canAddLiquidity, "Should allow whitelisted depositor to add liquidity");
 
         // Check for a non-whitelisted user
         address nonWhitelisted = address(0x789);
-        canAddLiquidity = onOff.checkAddLiquidity(nonWhitelisted, key, swapParams, "");
+        canAddLiquidity = onOff.checkAddLiquidity(nonWhitelisted, key, liqParams, "");
         assertFalse(canAddLiquidity, "Should not allow non-whitelisted user to add liquidity");
     }
 

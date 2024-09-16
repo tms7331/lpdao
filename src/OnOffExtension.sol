@@ -40,7 +40,7 @@ contract OnOffExtension {
         depositWhitelist[poolId][user] = _whitelisted;
     }
 
-    function checkAddLiquidity(address depositor, PoolKey calldata key, IPoolManager.SwapParams calldata, bytes calldata) public view returns (bool) {
+    function checkAddLiquidity(address depositor, PoolKey calldata key, IPoolManager.ModifyLiquidityParams calldata, bytes calldata) public view returns (bool) {
         return !depositWhitelistActive || depositWhitelist[key.toId()][depositor];
     }
 
