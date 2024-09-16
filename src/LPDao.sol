@@ -13,14 +13,16 @@ import {BeforeSwapDelta, BeforeSwapDeltaLibrary} from "v4-core/src/types/BeforeS
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
+import {StateLibrary} from "v4-core/src/libraries/StateLibrary.sol";
 import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
+import {FullMath} from "v4-core/src/libraries/FullMath.sol";
 import {Address} from "v4-core/lib/openzeppelin-contracts/contracts/utils/Address.sol";
 import {IERC20} from "v4-core/lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
 import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol";
 import {IAllowanceTransfer} from "permit2/src/interfaces/IAllowanceTransfer.sol";
-import {Voting} from "./Voting.sol";
-
+// TODO - horrible to import from test folder, copy this logic over here?
 import {EasyPosm} from "../test/utils/EasyPosm.sol";
+import {Voting} from "./Voting.sol";
 
 
 contract LPDao is BaseHook, Voting {
@@ -35,11 +37,18 @@ contract LPDao is BaseHook, Voting {
     event Deposit(address indexed user, address indexed token, PoolId indexed poolId, uint256 amount);
     event Withdraw(address indexed user, address indexed token, PoolId indexed poolId, uint256 amount);
 
+    struct LPPosition {
+        address user;
+        PoolKey poolKey;
+        uint token0Amount;
+        uint token1Amount;
+    }
+    mapping(uint tokenId => LPPosition position) public userPositions;
+
     constructor(IPoolManager _poolManager, IPositionManager _posm, IAllowanceTransfer _permit2) BaseHook(_poolManager) {
         posm = _posm;
         permit2 = _permit2;
     }
-
 
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
         return Hooks.Permissions({
@@ -96,7 +105,11 @@ contract LPDao is BaseHook, Voting {
     }
 
     function withdrawLiquidity(uint256 tokenId) external {
-        // TODO - have to make sure the tokenId belongs to msg.sender
+        LPPosition memory lpp = userPositions[tokenId];
+        require(lpp.user == msg.sender, "Not authorized");
+        PoolKey memory key = lpp.poolKey;
+
+        // TODO - let them set the min amounts?
         uint256 amount0Min = 0;
         uint256 amount1Min = 0;
         BalanceDelta delta = posm.burn(
@@ -108,8 +121,24 @@ contract LPDao is BaseHook, Voting {
             ""
         );
         // TODO - have to send thse back to user
-        int128 a0 = delta.amount0();
-        int128 a1 = delta.amount1();
+
+        uint startingToken0Amount = lpp.token0Amount;
+        uint startingToken1Amount = lpp.token1Amount;
+        uint endingToken0Amount = uint128(delta.amount0());
+        uint endingToken1Amount = uint128(delta.amount1());
+
+        // Have to call slot0...
+        (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee) = StateLibrary.getSlot0(poolManager, key.toId());
+        int profit = calculateProfit(
+                    startingToken0Amount,
+                    startingToken1Amount,
+                    endingToken0Amount,
+                    endingToken1Amount,
+                    sqrtPriceX96
+                );
+
+        // TODO - send back to user
+
     }
 
 
@@ -128,7 +157,9 @@ contract LPDao is BaseHook, Voting {
         override
         returns (bytes4, BeforeSwapDelta, uint24)
     {
+        // proxy.checkSwap(33);
 
+        // TODO - need to set proxy addressp
         // (bool success, bytes memory data) = proxy.delegatecall(
         //     abi.encodeWithSignature("checkSwap(uint256)", 33)
         // );
@@ -174,35 +205,55 @@ contract LPDao is BaseHook, Voting {
         return BaseHook.beforeRemoveLiquidity.selector;
     }
 
-
-    // Fallback function to forward calls to the proxy
-    fallback() external payable {
-        require(msg.sender == fundManager, "Only fund manager can interact with proxy");
-
-        address _proxy = proxy;
-        require(_proxy != address(0), "Proxy address not set");
-
-        assembly {
-            // Copy msg.data. We take full control of memory in this inline assembly
-            // block because it will not return to Solidity code. We overwrite the
-            // Solidity scratch pad at memory position 0.
-            calldatacopy(0, 0, calldatasize())
-
-            // Call the proxy.
-            // out and outsize are 0 because we don't know the size yet.
-            let result := delegatecall(gas(), _proxy, 0, calldatasize(), 0, 0)
-
-            // Copy the returned data.
-            returndatacopy(0, 0, returndatasize())
-
-            switch result
-            // delegatecall returns 0 on error.
-            case 0 {
-                revert(0, returndatasize())
-            }
-            default {
-                return(0, returndatasize())
-            }
+    function sqrt(uint x) internal pure returns (uint) {
+        if (x == 0) return 0;
+        uint z = (x + 1) / 2;
+        uint y = x;
+        while (z < y) {
+            y = z;
+            z = (x / z + z) / 2;
         }
+        return y;
+    }
+
+    function calculateProfit(
+        uint startingToken0Amount,
+        uint startingToken1Amount,
+        uint endingToken0Amount,
+        uint endingToken1Amount,
+        uint sqrtPriceX96
+    ) internal pure returns (int256) {
+        /*
+        Python test from ETH/USDT pool:
+        Starting balances (say start price was 2000):
+        2000 USDT
+        1 ETH
+
+        Ending balances (price 2298):
+        2999.2 USDT
+        1.30121 ETH
+
+        Profit in USDT should be:
+        999.2 USDT + .30121 * 2298 ETH = 1691 USDT
+
+        Using sqrtPriceX96 math:
+        sqrtPriceX96 = 3798623369673169567643029
+        sv = 2000 * 10**6 + 1 * 10**18 * (sqrtPriceX96 / 2**96) ** 2
+        ev =  2999.2 * 10**6 + 1.30121 * 10**18 * (sqrtPriceX96 / 2**96) ** 2
+        ev - sv
+        >>> 1691608977.4882383
+        >>> _/10**6
+        1691.6089774882382
+
+        To save precision use the sqrt of the amounts:
+        1 * 10**18 * (sqrtPriceX96 / 2**96) ** 2
+        is equivalent to
+        ((1 * 10**18)**.5 * sqrtPriceX96 / 2**96) ** 2
+        */
+        uint Q96 = 2**96;
+        uint startingValue = startingToken1Amount + FullMath.mulDiv(sqrt(startingToken0Amount), sqrtPriceX96, Q96) ** 2;
+        uint endingValue = endingToken1Amount + FullMath.mulDiv(sqrt(endingToken0Amount), sqrtPriceX96, Q96) ** 2;
+        int256 profit = int(endingValue) - int(startingValue);
+        return profit;
     }
 }
