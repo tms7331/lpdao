@@ -9,7 +9,8 @@ import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {IHooks} from "v4-core/src/interfaces/IHooks.sol";
 import {BaseHook} from "v4-periphery/src/base/hooks/BaseHook.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
-
+import {MockERC20} from "forge-std/mocks/MockERC20.sol";
+ 
 contract FakePoolManager {
     function donate(PoolKey memory key, uint256 amount0, uint256 amount1, bytes calldata hookData)
         external
@@ -20,9 +21,16 @@ contract FakePoolManager {
     }
 }
 
+contract MyERC20 is MockERC20 {
+    function mint(address to, uint256 amount) public {
+        _mint(to, amount);
+    }
+}
+
 
 contract AuctionExtensionTest is Test {
     AuctionExtension auction;
+    MyERC20 fakeWeth;
     address hook = address(0x456);
     address poolManager;
     PoolKey key;
@@ -33,34 +41,27 @@ contract AuctionExtensionTest is Test {
     uint256 minBid = 0.01 ether;
 
     function setUp() public {
-        // Set up initial values for the PoolKey (mocked)
-
         FakePoolManager fakePoolManager = new FakePoolManager();
         poolManager = address(fakePoolManager);
 
+        fakeWeth = new MyERC20();
+
         key = PoolKey(Currency.wrap(address(0)), Currency.wrap(address(0xABC)), 3000, 60, IHooks(hook));
-
-        // Deploy Auction contract
-        auction = new AuctionExtension(hook, poolManager);
-
-        // Label addresses for easier debugging
-        vm.label(hook, "Hook");
-        vm.label(poolManager, "Pool Manager");
-        vm.label(user1, "User 1");
-        vm.label(user2, "User 2");
+        auction = new AuctionExtension(hook, poolManager, address(fakeWeth));
     }
 
     function testCannotBidBelowMinimum() public {
-        vm.deal(user1, 1 ether);
         vm.prank(user1);
         vm.expectRevert("Bid too low!");
-        auction.placeBid{value: 0.005 ether}(key, blockNumber);
+        auction.placeBid(key, blockNumber, 0.005 ether);
     }
 
     function testPlaceBid() public {
-        vm.deal(user1, 1 ether);
+        fakeWeth.mint(user1, 100 ether);
         vm.prank(user1);
-        auction.placeBid{value: minBid}(key, blockNumber);
+        fakeWeth.approve(address(auction), 100 ether);
+        vm.prank(user1);
+        auction.placeBid(key, blockNumber, minBid);
 
         (address bidder, uint256 amount) = auction.winningBids(key.toId(), blockNumber);
         assertEq(bidder, user1);
@@ -70,22 +71,26 @@ contract AuctionExtensionTest is Test {
 
     function testOutbidAndRefundPreviousBidder() public {
         // First bid by user1
-        vm.deal(user1, 1 ether);
+        fakeWeth.mint(user1, 100 ether);
         vm.prank(user1);
-        auction.placeBid{value: minBid}(key, blockNumber);
+        fakeWeth.approve(address(auction), 100 ether);
+        vm.prank(user1);
+        auction.placeBid(key, blockNumber, minBid);
 
         // Second bid by user2 with higher value
-        vm.deal(user2, 2 ether);
+        fakeWeth.mint(user2, 100 ether);
+        vm.prank(user2);
+        fakeWeth.approve(address(auction), 100 ether);
+        uint256 user1BalanceBefore = fakeWeth.balanceOf(user1);
         vm.prank(user2);
 
-        uint256 user1BalanceBefore = user1.balance;
-        auction.placeBid{value: 0.02 ether}(key, blockNumber);
+        auction.placeBid(key, blockNumber, 0.02 ether);
         
         (address bidder, uint256 amount) = auction.winningBids(key.toId(), blockNumber);
         assertEq(bidder, user2);
         assertEq(amount, 0.02 ether);
 
-        uint256 user1BalanceAfter = user1.balance;
+        uint256 user1BalanceAfter = fakeWeth.balanceOf(user1);
         // Make sure we refunded the first user
         assertEq(user1BalanceAfter, user1BalanceBefore + minBid);
     }
@@ -93,9 +98,11 @@ contract AuctionExtensionTest is Test {
 
     function testSwapByWinningBidder() public {
         // Place a bid first
-        vm.deal(user1, 1 ether);
+        fakeWeth.mint(user1, 100 ether);
         vm.prank(user1);
-        auction.placeBid{value: minBid}(key, blockNumber);
+        fakeWeth.approve(address(auction), 100 ether);
+        vm.prank(user1);
+        auction.placeBid(key, blockNumber, minBid);
 
         IPoolManager.SwapParams memory swapParams = IPoolManager.SwapParams({zeroForOne: true, amountSpecified: 0.01 ether, sqrtPriceLimitX96: 0});
 
