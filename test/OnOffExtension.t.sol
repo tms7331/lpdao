@@ -86,7 +86,7 @@ contract OnOffHookTest is Test {
 
     function testCheckSwap() public {
         // Test when swap check is inactive
-        bool canSwap = onOff.checkSwap(address(0), key, swapParams, "");
+        (bool canSwap, ,) = onOff.checkSwap(address(0), key, swapParams, "");
         assertTrue(canSwap, "Should allow swap when swap check is inactive");
 
         // Activate swap check and activate the pool
@@ -96,13 +96,13 @@ contract OnOffHookTest is Test {
         onOff.setPoolActive(poolId, true);
 
         // Now check if swapping is allowed for active pool
-        canSwap = onOff.checkSwap(address(0), key, swapParams, "");
+        (canSwap, ,) = onOff.checkSwap(address(0), key, swapParams, "");
         assertTrue(canSwap, "Should allow swap for active pool");
 
         // Deactivate the pool and check again
         vm.prank(fundManager);
         onOff.setPoolActive(poolId, false);
-        canSwap = onOff.checkSwap(address(0), key, swapParams, "");
+        (canSwap, ,) = onOff.checkSwap(address(0), key, swapParams, "");
         assertFalse(canSwap, "Should not allow swap for inactive pool");
     }
 

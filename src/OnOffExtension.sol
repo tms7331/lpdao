@@ -44,7 +44,7 @@ contract OnOffExtension {
         return !depositWhitelistActive || depositWhitelist[key.toId()][depositor];
     }
 
-    function checkSwap(address, PoolKey calldata key, IPoolManager.SwapParams calldata, bytes calldata) public view returns (bool) {
-        return !swapCheckActive || activePool[key.toId()];
+    function checkSwap(address, PoolKey calldata key, IPoolManager.SwapParams calldata, bytes calldata) public view returns (bool, bool, uint) {
+        return (!swapCheckActive || activePool[key.toId()], false, 0);
     }
 }

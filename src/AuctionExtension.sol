@@ -8,7 +8,7 @@ import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 
 
-contract Auction {
+contract AuctionExtension {
     using PoolIdLibrary for PoolKey;
 
     uint256 public constant MINIMUM_BID = 0.01 ether;
@@ -52,14 +52,14 @@ contract Auction {
         return true;
     }
 
-    function checkSwap(address swapper, PoolKey calldata key, IPoolManager.SwapParams calldata, bytes calldata) public returns (bool) {
+    function checkSwap(address swapper, PoolKey calldata key, IPoolManager.SwapParams calldata, bytes calldata) public returns (bool, bool, uint) {
         require(msg.sender == hook, "Only hook!");
         PoolId poolId = key.toId();
         Bid memory currentWinningBid = winningBids[poolId][block.number];
         uint bidEthAmount = currentWinningBid.amount;
         // If bid is 0 - there was no bid or we already processed it
         if (bidEthAmount == 0) {
-            return true;
+            return (true, false, 0);
         }
         // Otherwise we need to check that the swap is from the auction winner
         require(swapper == currentWinningBid.bidder, "Only auction winner can call this function");
@@ -75,7 +75,7 @@ contract Auction {
             IPoolManager(poolManager).donate(key, 0, bidEthAmount, "");
         }
 
-        return true;
+        return (true, false, 0);
     }
 
     function donateBid(PoolKey calldata key, uint256 blockNumber) external {

@@ -2,7 +2,7 @@
 pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
-import {Auction} from "../src/AuctionExtension.sol";
+import {AuctionExtension} from "../src/AuctionExtension.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
 import {Currency, CurrencyLibrary} from "v4-core/src/types/Currency.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
@@ -21,8 +21,8 @@ contract FakePoolManager {
 }
 
 
-contract AuctionTest is Test {
-    Auction auction;
+contract AuctionExtensionTest is Test {
+    AuctionExtension auction;
     address hook = address(0x456);
     address poolManager;
     PoolKey key;
@@ -41,7 +41,7 @@ contract AuctionTest is Test {
         key = PoolKey(Currency.wrap(address(0)), Currency.wrap(address(0xABC)), 3000, 60, IHooks(hook));
 
         // Deploy Auction contract
-        auction = new Auction(hook, poolManager);
+        auction = new AuctionExtension(hook, poolManager);
 
         // Label addresses for easier debugging
         vm.label(hook, "Hook");
