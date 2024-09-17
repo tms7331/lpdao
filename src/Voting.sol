@@ -172,9 +172,4 @@ contract Voting {
 
         emit ProxyUpdated(proposal.proposedAddress);
     }
-
-    // TEMP - simplifies testing
-    function setProxyTemp(address _proxy) external {
-        proxy = IProxy(_proxy);
-    }
 }
