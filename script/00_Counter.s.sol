@@ -1,3 +1,4 @@
+/*
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
@@ -34,3 +35,5 @@ contract LPDaoScript is Script {
         require(address(counter) == hookAddress, "LPDaoScript: hook address mismatch");
     }
 }
+
+*/

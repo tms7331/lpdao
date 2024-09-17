@@ -1,3 +1,4 @@
+/*
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.19;
 
@@ -130,3 +131,5 @@ contract LPDaoScript is Script {
         swapRouter.swap(poolKey, params, testSettings, ZERO_BYTES);
     }
 }
+
+*/
