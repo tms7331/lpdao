@@ -62,8 +62,8 @@ contract Voting {
     // Track how much each user has deposited
     mapping(address => uint) public depositedLiquidity;
 
-    modifier onlyManager() {
-        require(msg.sender == fundManager, "Not the manager");
+    modifier onlyFundManager() {
+        require(msg.sender == fundManager, "Not the fund manager");
         _;
     }
 
@@ -78,6 +78,14 @@ contract Voting {
         require(address(proxy) == address(0), "Proxy already set");
         require(_proxy != address(0), "Invalid proxy address");
         proxy = IProxy(_proxy);
+    }
+
+    function setFundManager(address _fundManager) external {
+        // Only allow it to be set once on initialization so we don't have to wait
+        // a week to get it set
+        require(address(fundManager) == address(0), "Fund manager already set");
+        require(_fundManager != address(0), "Invalid fund manager address");
+        fundManager = _fundManager;
     }
 
     function proposeNewManager(address _newFundManager) external {
@@ -102,7 +110,7 @@ contract Voting {
         proposalCount++;
     }
 
-    function proposeNewProxy(address _newProxy, bytes memory _data) external onlyManager {
+    function proposeNewProxy(address _newProxy, bytes memory _data) external onlyFundManager {
         VotingToken votingToken = new VotingToken(address(this));
 
         proposals[proposalCount] = Proposal({
