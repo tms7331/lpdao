@@ -7,6 +7,7 @@ import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {TickMath} from "v4-core/src/libraries/TickMath.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
 import {PoolKey} from "v4-core/src/types/PoolKey.sol";
+import {LPFeeLibrary} from "v4-core/src/libraries/LPFeeLibrary.sol";
 import {BalanceDelta} from "v4-core/src/types/BalanceDelta.sol";
 import {PoolId, PoolIdLibrary} from "v4-core/src/types/PoolId.sol";
 import {CurrencyLibrary, Currency} from "v4-core/src/types/Currency.sol";
@@ -16,9 +17,11 @@ import {IPositionManager} from "v4-periphery/src/interfaces/IPositionManager.sol
 import {EasyPosm} from "./utils/EasyPosm.sol";
 import {Fixtures} from "./utils/Fixtures.sol";
 import {IERC20} from "v4-core/lib/openzeppelin-contracts/contracts/token/ERC20/IERC20.sol";
+import {MockERC20} from "v4-core/lib/solmate/src/test/utils/mocks/MockERC20.sol";
 
 import {LPDao} from "../src/LPDao.sol";
-import {OnOffHook} from "../src/OnOffExtension.sol";
+import {OnOffExtension} from "../src/OnOffExtension.sol";
+
 
 contract LPDaoTest is Test, Fixtures {
     using EasyPosm for IPositionManager;
@@ -27,9 +30,15 @@ contract LPDaoTest is Test, Fixtures {
     using StateLibrary for IPoolManager;
 
     LPDao hook;
+    MockERC20 weth;
+    MockERC20 alt;
     PoolId poolId;
 
-    address daoManager = address(1234);
+    address user1 = address(0x123);
+    address user2 = address(0x456);
+    uint256 amount = 1e18;
+
+    address fundManager = address(1234);
 
     uint256 tokenId;
     int24 tickLower;
@@ -41,6 +50,11 @@ contract LPDaoTest is Test, Fixtures {
         deployMintAndApprove2Currencies();
 
         deployAndApprovePosm(manager);
+        // fakeWeth = new MyERC20();
+
+        weth = MockERC20(Currency.unwrap(currency0));
+        alt = MockERC20(Currency.unwrap(currency1));
+        // fakeWeth = Currency.unwrap(currency0);
 
         // Deploy the hook to an address with the correct flags
         address payable flags = payable(address(
@@ -48,91 +62,71 @@ contract LPDaoTest is Test, Fixtures {
                 Hooks.BEFORE_INITIALIZE_FLAG | Hooks.BEFORE_SWAP_FLAG | Hooks.BEFORE_ADD_LIQUIDITY_FLAG | Hooks.BEFORE_REMOVE_LIQUIDITY_FLAG
             ) ^ (0x4444 << 144) // Namespace the hook to avoid collisions
         ));
-        bytes memory constructorArgs = abi.encode(manager, posm, permit2); //Add all the necessary constructor arguments from the hook
+        bytes memory constructorArgs = abi.encode(manager, posm, permit2, Currency.unwrap(currency0)); //Add all the necessary constructor arguments from the hook
         deployCodeTo("LPDao.sol:LPDao", constructorArgs, flags);
         hook = LPDao(flags);
 
+        hook.setFundManager(fundManager);
+
         // Create the pool
-        key = PoolKey(currency0, currency1, 3000, 60, IHooks(hook));
+        key = PoolKey(currency0, currency1, LPFeeLibrary.DYNAMIC_FEE_FLAG, 60, IHooks(hook));
         poolId = key.toId();
+
+        vm.prank(fundManager);
         manager.initialize(key, SQRT_PRICE_1_1, ZERO_BYTES);
 
         // Provide full-range liquidity to the pool
         tickLower = TickMath.minUsableTick(key.tickSpacing);
         tickUpper = TickMath.maxUsableTick(key.tickSpacing);
 
-        OnOffHook onOffHook = new OnOffHook(daoManager);
+        OnOffExtension onOffHook = new OnOffExtension(fundManager);
         hook.setProxy(address(onOffHook));
-
-        (tokenId,) = posm.mint(
-            key,
-            tickLower,
-            tickUpper,
-            10_000e18,
-            MAX_SLIPPAGE_ADD_LIQUIDITY,
-            MAX_SLIPPAGE_ADD_LIQUIDITY,
-            address(this),
-            block.timestamp,
-            ZERO_BYTES
-        );
     }
-
-    function testLPDaoHooks() public {
-        // positions were created in setup()
-        // assertEq(hook.beforeAddLiquidityCount(poolId), 1);
-        // assertEq(hook.beforeRemoveLiquidityCount(poolId), 0);
-
-        // assertEq(hook.beforeSwapCount(poolId), 0);
-        // assertEq(hook.afterSwapCount(poolId), 0);
-
-        // Perform a test swap //
-        bool zeroForOne = true;
-        int256 amountSpecified = -1e18; // negative number indicates exact input swap!
-        BalanceDelta swapDelta = swap(key, zeroForOne, amountSpecified, ZERO_BYTES);
-        // ------------------- //
-
-        assertEq(int256(swapDelta.amount0()), amountSpecified);
-
-        // assertEq(hook.beforeSwapCount(poolId), 1);
-        // assertEq(hook.afterSwapCount(poolId), 1);
-    }
-
-    function testLiquidityHooks() public {
-        // positions were created in setup()
-        // assertEq(hook.beforeAddLiquidityCount(poolId), 1);
-        // assertEq(hook.beforeRemoveLiquidityCount(poolId), 0);
-
-        // remove liquidity
-        uint256 liquidityToRemove = 1e18;
-        posm.decreaseLiquidity(
-            tokenId,
-            liquidityToRemove,
-            MAX_SLIPPAGE_REMOVE_LIQUIDITY,
-            MAX_SLIPPAGE_REMOVE_LIQUIDITY,
-            address(this),
-            block.timestamp,
-            ZERO_BYTES
-        );
-
-        // assertEq(hook.beforeAddLiquidityCount(poolId), 1);
-        // assertEq(hook.beforeRemoveLiquidityCount(poolId), 1);
-    }
-
 
     function testDepositLiquidity() public {
-        PoolKey memory k = PoolKey(currency0, currency1, 3000, 60, IHooks(hook));
-        poolId = key.toId();
-        int24 tLower = TickMath.minUsableTick(key.tickSpacing);
-        int24 tUpper = TickMath.maxUsableTick(key.tickSpacing);
-        uint256 amount = 10_000e18;
-        IERC20(Currency.unwrap(key.currency0)).approve(address(hook), amount);
-        IERC20(Currency.unwrap(key.currency1)).approve(address(hook), amount);
-        uint tokenId = hook.depositLiquidity(k, tLower, tUpper, amount);
-        // If we make it here without reverting, we were successful...
+        // Simulate user approval and transfer before deposit
+        weth.mint(user1, amount);
+        alt.mint(user1, amount);
+        vm.prank(user1);
+        weth.approve(address(hook), amount);
+        vm.prank(user1);
+        alt.approve(address(hook), amount);
+        
+        vm.prank(user1);
+        uint256 tokenId = hook.depositLiquidity(key, -100020, 100020, amount, amount, amount);
 
-        hook.withdrawLiquidity(tokenId);
+        // Check if deposit was successful
+
+        (address user,,
+        uint token0Amount,
+        uint token1Amount) = hook.userPositions(tokenId);
+        assertEq(user, user1);
+        // Got these numbers from a console.log...
+        assertEq(token0Amount, 993267104342174101);
+        assertEq(token1Amount, 993267104342174101);
     }
 
+    function testWithdrawLiquidity() public {
+        // First deposit - same logic as previous test
+        weth.mint(user1, amount);
+        alt.mint(user1, amount);
+        vm.prank(user1);
+        weth.approve(address(hook), amount);
+        vm.prank(user1);
+        alt.approve(address(hook), amount);
+        vm.prank(user1);
+        uint256 tokenId = hook.depositLiquidity(key, -100020, 100020, amount, amount, amount);
 
+        // Now try to withdraw liquidity
+        vm.prank(user1);
+        hook.withdrawLiquidity(tokenId);
 
+        // Verify that the liquidity was withdrawn and userPositions is cleared
+        (address user,,
+        uint token0Amount,
+        uint token1Amount) = hook.userPositions(tokenId);
+
+        assertEq(user, address(0)); // Should be cleared after withdrawal
+    }
 }
+

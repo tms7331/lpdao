@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import "forge-std/console.sol";
-
 import {BaseHook} from "v4-periphery/src/base/hooks/BaseHook.sol";
 import {Hooks} from "v4-core/src/libraries/Hooks.sol";
 import {IPoolManager} from "v4-core/src/interfaces/IPoolManager.sol";
@@ -33,9 +31,10 @@ contract LPDao is BaseHook, Voting {
 
     IPositionManager posm;
     IAllowanceTransfer permit2;
+    address weth;
 
-    event Deposit(address indexed user, address indexed token, PoolId indexed poolId, uint256 amount);
-    event Withdraw(address indexed user, address indexed token, PoolId indexed poolId, uint256 amount);
+    event Deposit(address indexed user, address indexed token, PoolId indexed poolId, uint amount);
+    event Withdraw(address indexed user, address indexed token, PoolId indexed poolId, uint amount);
 
     struct LPPosition {
         address user;
@@ -45,9 +44,10 @@ contract LPDao is BaseHook, Voting {
     }
     mapping(uint tokenId => LPPosition position) public userPositions;
 
-    constructor(IPoolManager _poolManager, IPositionManager _posm, IAllowanceTransfer _permit2) BaseHook(_poolManager) {
+    constructor(IPoolManager _poolManager, IPositionManager _posm, IAllowanceTransfer _permit2, address _weth) BaseHook(_poolManager) {
         posm = _posm;
         permit2 = _permit2;
+        weth = _weth;
     }
 
     function getHookPermissions() public pure override returns (Hooks.Permissions memory) {
@@ -73,45 +73,58 @@ contract LPDao is BaseHook, Voting {
     function approvePosmCurrency(Currency currency) internal {
         // Because POSM uses permit2, we must execute 2 permits/approvals.
         // 1. First, the caller must approve permit2 on the token.
-        IERC20(Currency.unwrap(currency)).approve(address(permit2), type(uint256).max);
+        IERC20(Currency.unwrap(currency)).approve(address(permit2), type(uint).max);
         // 2. Then, the caller must approve POSM as a spender of permit2. TODO: This could also be a signature.
         permit2.approve(Currency.unwrap(currency), address(posm), type(uint160).max, type(uint48).max);
     }
 
 
-    function depositLiquidity(PoolKey calldata key, int24 tickLower, int24 tickUpper, uint256 amount) external returns (uint256 tokenId) {
-        approvePosmCurrency(key.currency0);
-        approvePosmCurrency(key.currency1);
+    function depositLiquidity(PoolKey calldata key, int24 tickLower, int24 tickUpper, uint amount0, uint amount1, uint liquidity) external returns (uint tokenId) {
+        uint bal = IERC20(Currency.unwrap(key.currency0)).balanceOf(msg.sender);
+        IERC20(Currency.unwrap(key.currency0)).transferFrom(msg.sender, address(this), amount0);
+        IERC20(Currency.unwrap(key.currency1)).transferFrom(msg.sender, address(this), amount1);
 
-        // Need to transfer the currendies to our contract
-        // TODO - have to figure out actual amounts here, which might not be easy
-        IERC20(Currency.unwrap(key.currency0)).transferFrom(msg.sender, address(this), amount);
-        IERC20(Currency.unwrap(key.currency1)).transferFrom(msg.sender, address(this), amount);
-
-        uint256 MAX_SLIPPAGE_ADD_LIQUIDITY = type(uint256).max;
-        uint256 MAX_SLIPPAGE_REMOVE_LIQUIDITY = 0;
-
-        (tokenId,) = posm.mint(
+        BalanceDelta delta;
+        (tokenId, delta) = posm.mint(
             key,
             tickLower,
             tickUpper,
-            amount,
-            MAX_SLIPPAGE_ADD_LIQUIDITY,
-            MAX_SLIPPAGE_ADD_LIQUIDITY,
+            liquidity,
+            type(uint).max,
+            type(uint).max,
             address(this),
             block.timestamp,
             ""
         );
+
+        // Delta amounts are NEGATIVE
+        // Refund any extra tokens back to them
+        uint amount0Refund = amount0 - uint(uint128(-delta.amount0()));
+        uint amount1Refund = amount1 - uint(uint128(-delta.amount1()));
+        if (amount0Refund > 0) {
+            IERC20(Currency.unwrap(key.currency0)).transfer(msg.sender, amount0Refund);
+        }
+        if (amount1Refund > 0) {
+            IERC20(Currency.unwrap(key.currency1)).transfer(msg.sender, amount1Refund);
+        }
+
+        LPPosition memory lpp = LPPosition({
+            user: msg.sender,
+            poolKey: key,
+            token0Amount: uint128(-delta.amount0()),
+            token1Amount: uint128(-delta.amount1())
+        });
+        userPositions[tokenId] = lpp;
     }
 
-    function withdrawLiquidity(uint256 tokenId) external {
+    function withdrawLiquidity(uint tokenId) external {
         LPPosition memory lpp = userPositions[tokenId];
         require(lpp.user == msg.sender, "Not authorized");
         PoolKey memory key = lpp.poolKey;
 
         // TODO - let them set the min amounts?
-        uint256 amount0Min = 0;
-        uint256 amount1Min = 0;
+        uint amount0Min = 0;
+        uint amount1Min = 0;
         BalanceDelta delta = posm.burn(
             tokenId,
             amount0Min,
@@ -121,33 +134,48 @@ contract LPDao is BaseHook, Voting {
             ""
         );
 
-        uint startingToken0Amount = lpp.token0Amount;
-        uint startingToken1Amount = lpp.token1Amount;
         uint endingToken0Amount = uint128(delta.amount0());
         uint endingToken1Amount = uint128(delta.amount1());
 
         // Have to call slot0...
         (uint160 sqrtPriceX96, int24 tick, uint24 protocolFee, uint24 lpFee) = StateLibrary.getSlot0(poolManager, key.toId());
         int profit = calculateProfit(
-                    startingToken0Amount,
-                    startingToken1Amount,
+                    lpp.token0Amount,
+                    lpp.token1Amount,
                     endingToken0Amount,
                     endingToken1Amount,
                     sqrtPriceX96
                 );
 
-        // TODO - send back to user
+        // Send 20% of profit to the fundManager, and return rest to the user
 
+        // TODO - profit is calculated in token1, but logic below will fail if their
+        // position doesn't have enough token1
+
+        IERC20(Currency.unwrap(key.currency0)).transfer(msg.sender, endingToken0Amount);
+
+        // Only transfer if profit > 0!!
+        if (profit > 0) {
+            // Remember - this is in token1!
+            uint fundManagerProfit = uint(profit) / 5;
+            IERC20(Currency.unwrap(key.currency1)).transfer(fundManager, uint(fundManagerProfit));
+            endingToken1Amount -= fundManagerProfit;
+        }
+        IERC20(Currency.unwrap(key.currency1)).transfer(msg.sender, endingToken1Amount);
+
+        delete userPositions[tokenId];
     }
 
-
     function beforeInitialize(address initializer, PoolKey calldata key, uint160, bytes calldata) external override returns (bytes4) {
-        // TODO - enable
         require(initializer == fundManager, "Only fund manager can initialize");
-        require(key.currency0 == Currency.wrap(address(0)) || key.currency1 == Currency.wrap(address(0)), "One currency must be ETH");
-        
+        require(key.currency0 == Currency.wrap(weth) || key.currency1 == Currency.wrap(weth), "One currency must be WETH");
         // Our beforeSwap logic relies on pool fees being dynamic
         require(key.fee.isDynamicFee(), "Pool must have dynamic fee");
+
+        // This does a max approval, would it ever be possible to use all of it?
+        approvePosmCurrency(key.currency0);
+        approvePosmCurrency(key.currency1);
+
         return BaseHook.beforeInitialize.selector;
     }
 
@@ -161,7 +189,7 @@ contract LPDao is BaseHook, Voting {
         require(canSwap, "Swap not allowed");
 
         if (feeAdj) {
-            uint overrideFee = fee | uint256(LPFeeLibrary.OVERRIDE_FEE_FLAG);
+            uint overrideFee = fee | uint(LPFeeLibrary.OVERRIDE_FEE_FLAG);
             return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, uint24(overrideFee));
         }
         return (BaseHook.beforeSwap.selector, BeforeSwapDeltaLibrary.ZERO_DELTA, 0);
@@ -173,6 +201,8 @@ contract LPDao is BaseHook, Voting {
         IPoolManager.ModifyLiquidityParams calldata liqParams,
         bytes calldata data
     ) external override returns (bytes4) {
+        // 'depositor' is actually posm.  Is there some way to constrain it to the hook?
+        // require(depositor == address(this), "Only this contract can add liquidity");
         bool canAddLiquidity = proxy.checkAddLiquidity(depositor, key, liqParams, data);
         require(canAddLiquidity, "Add liquidity not allowed");
 
